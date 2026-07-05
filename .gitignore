@@ -1,0 +1,31 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Variables de entorno y secretos
+.env
+*.key
+*.cer
+*.pem
+credentials/*.txt
+credentials/*.key
+credentials/*.cer
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Descargas (contienen CFDIs reales, nunca deben subirse)
+downloads/*.zip
+downloads/*.xml
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
