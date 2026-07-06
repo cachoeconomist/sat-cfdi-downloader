@@ -6,6 +6,7 @@ Fase 2 - Flujo completo de Descarga Masiva del SAT:
 """
 import time
 import logging
+import base64
 from datetime import date
 from pathlib import Path
 
@@ -117,11 +118,13 @@ def descargar_paquetes(
         logger.info(f"Descargando paquete: {id_paquete}")
         try:
             response, datos = sat_service.recover_comprobante_download(
-                id_paquete=id_paquete
+            id_paquete=id_paquete
             )
             ruta = directorio_destino / f"{id_paquete}.zip"
+            # La librería puede devolver base64 string o bytes según la versión
+            if isinstance(datos, str):
+                datos = base64.b64decode(datos)
             ruta.write_bytes(datos)
-            logger.info(f"Paquete guardado en: {ruta} ({len(datos):,} bytes)")
             archivos_descargados.append(ruta)
 
         except Exception as e:

@@ -33,9 +33,9 @@ def main() -> None:
     sat_service = build_sat_service(signer)
     logger.info(f"Autenticado como RFC: {signer.rfc}")
 
-    # 2. Parámetros de descarga — ajusta el rango de fechas aquí
-    fecha_inicial = date(2024, 1, 1)
-    fecha_final   = date(2024, 1, 31)
+    # 2. Parámetros de descarga — ajusta el rango de fechas aquí (AAAA, M, D)
+    fecha_inicial = date(2026, 1, 1)
+    fecha_final   = date(2026, 7, 4)
 
     # 3. Solicitar
     id_solicitud = solicitar_descarga(sat_service, fecha_inicial, fecha_final)
