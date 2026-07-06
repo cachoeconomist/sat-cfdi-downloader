@@ -1,288 +1,303 @@
-# 📈 Mexico Term Structure — Estructura Temporal de Tasas de Interés en México
+# 🧾 SAT CFDI Downloader
 
-> Réplica empírica del Capítulo 10 de **Campbell, Lo & MacKinlay (1997)** — *The Econometrics of Financial Markets* — con datos de deuda gubernamental mexicana (CETES, Bonos M y Udibonos), periodo 2010–2025.
+Herramienta de automatización en Python para la **descarga masiva de CFDIs recibidos** directamente desde el Web Service oficial del SAT, usando la librería open-source [`satcfdi`](https://github.com/SAT-CFDI/python-satcfdi). Los comprobantes descargados se parsean y exportan a un archivo `.xlsx` listo para análisis contable o financiero.
 
----
-
-## 📌 ¿De qué trata este proyecto?
-
-Imagina que quieres saber si es buen momento para comprar un bono del gobierno, o si Banxico va a subir o bajar las tasas de interés. Una forma de responder es **mirar la "curva de rendimientos"** — una gráfica que relaciona el tiempo que prestas tu dinero (plazo) con la tasa de interés que recibes.
-
-Este proyecto analiza los **bonos del gobierno mexicano** desde 2010 hasta 2025 para entender:
-
-- ¿Qué forma tiene la curva de rendimientos en distintos momentos?
-- ¿Qué nos dice esa forma sobre el futuro de la economía?
-- ¿Podemos predecir las tasas de interés futuras con las actuales?
+> **Nota de seguridad:** Este proyecto nunca usa Web Scraping, Selenium ni Playwright. Toda la comunicación es vía el Web Service oficial del SAT (protocolo SOAP + WS-Security). Ninguna credencial o archivo fiscal se almacena en el repositorio.
 
 ---
 
-## 🗂️ Estructura del repositorio
+## 📋 Tabla de Contenidos
+
+- [¿Qué problema resuelve?](#-qué-problema-resuelve)
+- [Arquitectura del proyecto](#-arquitectura-del-proyecto)
+- [Flujo de operación](#-flujo-de-operación)
+- [Requisitos](#-requisitos)
+- [Instalación y configuración](#-instalación-y-configuración)
+- [Uso](#-uso)
+- [Personalización](#-personalización)
+- [Seguridad](#-seguridad)
+- [Créditos](#-créditos)
+- [Licencia](#-licencia)
+
+---
+
+## ❓ ¿Qué problema resuelve?
+
+Descargar CFDIs uno por uno desde el portal del SAT es un proceso manual, lento e impráctico para cualquier persona física o moral con volumen medio-alto de facturas. Este proyecto automatiza el ciclo completo:
+
+1. **Autenticación** ante el SAT usando tu e.firma (FIEL)
+2. **Solicitud** de descarga masiva por rango de fechas
+3. **Verificación** del estado de la solicitud (polling automático)
+4. **Descarga** de los paquetes `.zip` con los XMLs
+5. **Parseo** de cada CFDI y extracción de campos clave
+6. **Exportación** a un archivo `.xlsx` listo para Excel o Numbers
+
+El resultado es una hoja de cálculo consolidada con todos tus comprobantes organizados por folio, emisor, conceptos, IVA y montos — sin intervención manual.
+
+---
+
+## 🗂 Arquitectura del proyecto
 
 ```
-mexico-term-structure/
-├── data/
-│   ├── raw/                  # Datos descargados directamente de Banxico (SIE)
-│   └── processed/            # Datos limpios listos para análisis
-│       ├── mexico_yields_clean.csv
-│       ├── forward_rates.csv
-│       ├── zero_coupon_curve.csv
-│       └── nelson_siegel_curve.csv
-├── outputs/
-│   ├── figures/              # Gráficas generadas por cada notebook
-│   └── tables/               # Tablas de resultados (CSV)
-│       └── campbell_shiller_results.csv
-├── 00_environment_setup.ipynb
-├── 01_data_acquisition.ipynb
-├── 02_discount_bonds.ipynb
-├── 03_coupon_bonds.ipynb
-├── 04_zero_coupon_curve.ipynb
-├── 05_nelson_siegel.ipynb
-├── 06_expectations_hypothesis.ipynb
-├── 07_yield_spreads_forecasts.ipynb
-├── 08_conclusion_results.ipynb
-├── requirements.txt
-└── README.md
+sat-cfdi-downloader/
+│
+├── .env                          # Credenciales locales (NUNCA se sube a Git)
+├── .env.example                  # Plantilla pública de variables requeridas
+├── .gitignore                    # Blindado contra fuga de credenciales y CFDIs
+├── requirements.txt              # Dependencias del proyecto
+├── README.md                     # Este archivo
+│
+├── credentials/                  # Archivos de e.firma (NUNCA se suben a Git)
+│   ├── .gitkeep                  # Marcador para que Git registre la carpeta vacía
+│   ├── tu_certificado.cer        # Certificado público de tu e.firma
+│   └── tu_llave.key              # Llave privada de tu e.firma (cifrada)
+│
+├── downloads/                    # Paquetes y reportes generados (NUNCA se suben a Git)
+│   ├── .gitkeep
+│   ├── <ID_PAQUETE>.zip          # ZIP descargado del SAT con los XMLs
+│   └── cfdis_consolidado.xlsx    # Reporte final exportado
+│
+├── src/
+│   └── sat_downloader/           # Paquete principal (lógica de negocio)
+│       ├── __init__.py
+│       ├── config.py             # Carga y valida variables del .env
+│       ├── auth.py               # Construye el Signer y el cliente SAT
+│       ├── solicitudes.py        # Ciclo: solicitar → verificar → descargar
+│       ├── parser.py             # Parsea XMLs y extrae campos clave
+│       └── utils/
+│           └── __init__.py
+│
+├── scripts/                      # Puntos de entrada ejecutables
+│   ├── test_handshake.py         # Prueba de autenticación (Fase 1)
+│   ├── descarga_masiva.py        # Descarga de CFDIs (Fase 2)
+│   └── parsear_cfdis.py          # Parser y exportación a Excel (Fase 3)
+│
+└── tests/
+    └── __init__.py
+```
+
+### Responsabilidad de cada módulo
+
+| Módulo | Responsabilidad |
+|---|---|
+| `config.py` | Leer el `.env` y validar que todas las variables estén presentes antes de ejecutar cualquier cosa. Falla rápido con mensajes claros. |
+| `auth.py` | Cargar el certificado y la llave privada en memoria, desencriptarla con la contraseña y construir el cliente del Web Service del SAT. |
+| `solicitudes.py` | Implementar el ciclo de tres pasos del SAT: solicitar descarga → consultar estado en loop → descargar paquetes ZIP. |
+| `parser.py` | Abrir cada ZIP, leer los XMLs, extraer los campos de interés y devolver una lista de filas listas para exportar. |
+
+---
+
+## 🔄 Flujo de operación
+
+```
+.env (credenciales)
+      │
+      ▼
+config.py ──► Validación de variables
+      │
+      ▼
+auth.py ──► Signer (FIEL desencriptada en memoria)
+      │
+      ▼
+SAT Web Service (SOAP + WS-Security)
+      │
+      ├── solicitar_descarga() ──► IdSolicitud
+      │
+      ├── verificar_estado()   ──► polling hasta TERMINADA
+      │                              │
+      │                              ▼
+      └── descargar_paquetes() ──► .zip en downloads/
+                                       │
+                                       ▼
+                                  parser.py
+                                       │
+                                       ▼
+                              cfdis_consolidado.xlsx
 ```
 
 ---
 
-## 🔧 Instrucciones de reproducción
+## 🛠 Requisitos
+
+- Python 3.11 o superior
+- macOS, Linux o Windows (WSL recomendado en Windows)
+- e.firma (FIEL) vigente emitida por el SAT
+- Los archivos `.cer` y `.key` de tu e.firma y su contraseña
+
+---
+
+## ⚙️ Instalación y configuración
+
+### 1. Clona el repositorio
 
 ```bash
-# 1. Clonar el repositorio
-git clone https://github.com/cachoeconomist/mexico-term-structure.git
-cd mexico-term-structure
-
-# 2. Crear entorno virtual
-python3 -m venv venv && source venv/bin/activate
-
-# 3. Instalar dependencias
-pip install -r requirements.txt
-
-# 4. Ejecutar los notebooks en orden
-jupyter notebook
+git clone https://github.com/tu-usuario/sat-cfdi-downloader.git
+cd sat-cfdi-downloader
 ```
 
-Ejecutar los notebooks en orden numérico, del `00` al `08`. El notebook `01` crea automáticamente los directorios `data/processed/`, `outputs/figures/` y `outputs/tables/` si no existen.
+### 2. Crea el entorno virtual e instala dependencias
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # En Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 3. Configura tus credenciales
+
+Copia la plantilla del archivo de entorno:
+
+```bash
+cp .env.example .env
+```
+
+Coloca los archivos de tu e.firma en la carpeta `credentials/`:
+
+```bash
+cp /ruta/a/tu_certificado.cer credentials/
+cp /ruta/a/tu_llave.key credentials/
+```
+
+Edita el archivo `.env` con tus datos reales:
+
+```env
+SAT_RFC=TURF123456XX
+SAT_CSD_CERT_PATH=credentials/tu_certificado.cer
+SAT_CSD_KEY_PATH=credentials/tu_llave.key
+SAT_CSD_PASSWORD=tu_contraseña_de_efirma
+```
+
+> ⚠️ Nunca compartas tu archivo `.env` ni tus archivos `.cer` o `.key`. El `.gitignore` ya los excluye del repositorio.
+
+### 4. Verifica la autenticación
+
+```bash
+python scripts/test_handshake.py
+```
+
+Si todo está bien verás:
+```
+✅ Handshake preparado correctamente. El Signer es válido y firma mensajes.
+```
 
 ---
 
-## 📊 Fuentes de datos
+## 🚀 Uso
 
-| Instrumento | Plazos | Fuente |
-|-------------|--------|--------|
-| **CETES** | 28, 91, 182, 364 días | Banco de México (SIE) |
-| **Bonos M** | 3, 5, 10, 20, 30 años | Banco de México (SIE) |
-| **Udibonos** | 3, 5, 10, 20, 30 años | Banco de México (SIE) |
+### Paso 1 — Descarga masiva de CFDIs
 
-- **Frecuencia:** Mensual
-- **Periodo:** Enero 2010 – Diciembre 2025
-- **Descarga:** 15 de mayo de 2026
+Edita el rango de fechas en `scripts/descarga_masiva.py`:
 
----
+```python
+fecha_inicial = date(2025, 1, 1)
+fecha_final   = date(2025, 12, 31)
+```
 
-## 📓 Descripción de los notebooks
+Ejecuta:
 
-### `00_environment_setup.ipynb`
-Verificación del entorno Python. Comprueba que las librerías principales (`pandas`, `numpy`, `matplotlib`) estén instaladas correctamente.
+```bash
+python scripts/descarga_masiva.py
+```
 
----
+El script solicitará la descarga al SAT, esperará a que esté lista y guardará el `.zip` en `downloads/`.
 
-### `01_data_acquisition.ipynb` — Adquisición y limpieza de datos
-Descarga, limpieza y preparación de las series de rendimiento de CETES, Bonos M y Udibonos desde el SIE de Banxico. Incluye:
-- Creación automática de directorios de salida.
-- Verificación del mapeo de columnas de Udibonos.
-- Transformación a log-rendimientos (ec. 10.1.3 de CLM).
-- Generación de heatmaps de tasas para visualizar la evolución temporal.
-- **Salida:** `data/processed/mexico_yields_clean.csv`
+### Paso 2 — Parsear y exportar a Excel
 
-**Hallazgo clave:** Los CETES tienen datos completos; los Bonos M de 20 y 30 años presentan faltantes en algunos periodos (normal: no siempre hay bonos de muy largo plazo en el mercado); los Udibonos tienen muchos faltantes, especialmente el plazo de 5 años.
+```bash
+python scripts/parsear_cfdis.py
+```
 
----
+Esto procesará todos los `.zip` en `downloads/` y generará `downloads/cfdis_consolidado.xlsx` con las siguientes columnas:
 
-### `02_discount_bonds.ipynb` — CETES: bonos de descuento
-Calcula precios implícitos, log-rendimientos y tasas forward para CETES. Sigue la Sección 10.1.1 de CLM.
+| Columna | Descripción |
+|---|---|
+| Folio | Folio del comprobante |
+| Fecha | Fecha de emisión |
+| Método de Pago | PUE, PPD, etc. |
+| Lugar de Expedición | CP de expedición |
+| RFC Emisor | RFC de quien emitió la factura |
+| Nombre Emisor | Razón social del emisor |
+| Cantidad | Cantidad del concepto |
+| Descripción | Descripción del concepto |
+| IVA | Importe de IVA del concepto |
+| Subtotal | Subtotal del comprobante |
+| Total | Total del comprobante |
 
-**Corrección aplicada (v2):** Los precios de CETES se calculan con interés simple `P = 1/(1 + Y·d/360)`, que es la convención oficial de cotización en México (la versión original usaba interés compuesto, lo que era incorrecto).
-
-**Hallazgo clave:** En enero 2023 (pico de tasas), las tasas forward eran más bajas que las tasas spot: el mercado anticipaba que Banxico bajaría las tasas. Eso es exactamente lo que ocurrió en 2024–2025.
-
-**Marco teórico:**
-
-$$P_{nt} = \frac{1}{(1 + Y_{nt})^n}, \qquad y_{nt} = -\frac{1}{n}\,p_{nt}, \qquad (1 + F_{nt}) = \frac{(1+Y_{n+1,t})^{n+1}}{(1+Y_{nt})^n}$$
-
----
-
-### `03_coupon_bonds.ipynb` — Bonos M: duración y convexidad
-Calcula duración de Macaulay, duración modificada y convexidad para los Bonos M. Sigue la Sección 10.1.2 de CLM.
-
-**Corrección aplicada (v2):** Se usan los cupones reales de cada bono (`bonos_detalle.csv`) en lugar de aproximarlos con la tasa de rendimiento (YTM). Cuando el bono no cotiza a la par, la diferencia en duración puede ser de 0.3–0.5 años (el error era particularmente grande en 2023, cuando el cupón era ~7.5% pero el YTM ~10.4%).
-
-**Hallazgo clave (enero 2023, tasas en su pico):**
-
-| Plazo | Tasa (YTM) | Duración modificada | Caída ante +1% en tasas |
-|-------|-----------|---------------------|--------------------------|
-| 3 años | 9.94% | ~2.5 | −2.5% |
-| 5 años | 8.76% | ~4.0 | −4.0% |
-| 10 años | 8.69% | ~6.6 | −6.6% |
-| 20 años | 8.71% | ~9.4 | **−9.4%** |
-
-Los bonos de largo plazo son mucho más sensibles a los cambios en tasas. Si crees que Banxico va a bajar tasas, conviene comprar bonos largos (su precio subirá más). Si crees que las tasas subirán, es mejor evitar los bonos largos.
-
-**Marco teórico:**
-
-$$P_{cnt} = \sum_{i=1}^{n}\frac{C}{(1+Y_{cnt})^i} + \frac{1}{(1+Y_{cnt})^n}, \qquad D_{cnt} = \frac{\sum_{i=1}^{n}\frac{i\,C}{(1+Y_{cnt})^i} + \frac{n(1+C)}{(1+Y_{cnt})^n}}{P_{cnt}}, \qquad MD = \frac{D_{cnt}}{1+Y_{cnt}}$$
+> Cada concepto dentro de un CFDI genera una fila independiente, por lo que el total de filas puede ser mayor al total de CFDIs.
 
 ---
 
-### `04_zero_coupon_curve.ipynb` — Curva cupón cero: spline de McCulloch
-Estima la curva de rendimiento cupón cero mediante splines cúbicos (método de McCulloch 1971/1975). Sigue la Sección 10.1.3 de CLM (ec. 10.1.24–10.1.25).
+## 🔧 Personalización
 
-**Corrección crítica aplicada (v2):** La versión original usaba optimización no lineal (`scipy.optimize.least_squares`) sobre los nodos del spline. El libro define el método de McCulloch como una **regresión OLS lineal** con funciones base `f_j(n)`. Se reemplazó completamente por la implementación OLS correcta.
+### Cambiar el rango de fechas
 
-**Hallazgo clave (diciembre 2025):** La función de descuento tiene forma convexa: cae rápido en plazos cortos (tasas cortas altas) y luego más lentamente en plazos largos (tasas largas más bajas). Esta forma es la firma de una curva ligeramente invertida que anticipa bajas de tasas.
+En `scripts/descarga_masiva.py`, modifica:
 
-**Marco teórico:**
+```python
+fecha_inicial = date(2025, 1, 1)   # Año, mes, día
+fecha_final   = date(2025, 6, 30)
+```
 
-$$P(n) = 1 + \sum_{j=1}^{J}a_j\,f_j(n), \qquad P_{cn} = P_1 C + P_2 C + \cdots + P_n(1+C)$$
+### Descargar CFDIs emitidos en lugar de recibidos
 
----
+En `src/sat_downloader/solicitudes.py`, en la función `solicitar_descarga`, cambia:
 
-### `05_nelson_siegel.ipynb` — Modelo Nelson-Siegel (Diebold-Li)
-Estima la curva cupón cero con el modelo paramétrico de Nelson-Siegel (1987) en su versión dinámica de Diebold-Li (2006). Complementa el spline con una representación de solo 4 parámetros.
+```python
+# Recibidos (default)
+response = sat_service.recover_comprobante_received_request(...)
 
-**Parámetros estimados para enero 2023 (pico de tasas):**
+# Emitidos
+response = sat_service.recover_comprobante_issued_request(...)
+```
 
-| Componente | Valor | Interpretación |
-|------------|-------|----------------|
-| Nivel (β₀) | 8.27% | Tasa de muy largo plazo esperada por el mercado |
-| Pendiente (β₁) | 2.01% | Inclinación de la curva; positivo = curva normal |
-| Curvatura (β₂) | −1.43% | Giba en la parte media de la curva |
-| Decaimiento (λ) | 1.75 | Los efectos de corto plazo desaparecen hacia los 5 años |
+### Agregar más campos al Excel
 
-**Salida:** `data/processed/nelson_siegel_curve.csv`
+En `src/sat_downloader/parser.py`, dentro de `parsear_cfdi()`, agrega los campos que necesites al diccionario de cada fila. Consulta la [especificación técnica del CFDI 4.0](https://www.sat.gob.mx/consulta/65884/conoce-las-caracteristicas-del-cfdi-version-4.0) para ver todos los atributos disponibles.
 
-**Marco teórico:**
+En `scripts/parsear_cfdis.py`, agrega el nombre de la nueva columna a la lista `COLUMNAS`.
 
-$$y(\tau) = \beta_0 + \beta_1\left(\frac{1-e^{-\lambda\tau}}{\lambda\tau}\right) + \beta_2\left(\frac{1-e^{-\lambda\tau}}{\lambda\tau} - e^{-\lambda\tau}\right)$$
+### Ajustar el tiempo de espera del polling
 
----
+En `scripts/descarga_masiva.py`:
 
-### `06_expectations_hypothesis.ipynb` — Hipótesis de Expectativas (CETES)
-Prueba la Hipótesis de Expectativas Pura (PEH) en el mercado de CETES usando regresiones forward-spot. Sigue la Sección 10.2.1 de CLM (ec. 10.2.9–10.2.11).
-
-**Resultados:**
-
-| Transición | β (ideal = 1) | R² | Interpretación |
-|------------|---------------|----|----------------|
-| 28 → 91 días | 0.974 | ~0.88 | Pequeña prima de liquidez |
-| 91 → 182 días | 0.981 | ~0.92 | ✅ EH se cumple bien |
-| 182 → 364 días | 0.961 | ~0.91 | ✅ EH se cumple bien |
-
-**Conclusión:** Para plazos de 3 a 6 meses, las tasas forward de CETES son **excelentes predictores** de las tasas futuras (R² > 0.90). Para el plazo más corto (28 → 91 días), los inversionistas exigen una pequeña prima de liquidez adicional.
+```python
+ids_paquetes = verificar_estado(
+    sat_service,
+    id_solicitud,
+    intervalo_segundos=60,   # Segundos entre cada consulta al SAT
+    max_intentos=10,         # Número máximo de intentos antes de abortar
+)
+```
 
 ---
 
-### `07_yield_spreads_forecasts.ipynb` — Regresiones de Campbell-Shiller
-Replica las regresiones de Campbell & Shiller (1991) para evaluar la Hipótesis de Expectativas usando el spread de rendimiento entre Bonos M y CETES. Sigue las ecuaciones 10.2.16 y 10.2.18 de CLM.
+## 🔒 Seguridad
 
-**Corrección aplicada (v2):** Se eliminó la lectura de `nelson_siegel_curve.csv` que la versión original intentaba cargar pero que no era necesaria para las regresiones, evitando un error de archivo no encontrado.
+Este proyecto fue diseñado con seguridad como prioridad desde el primer commit:
 
-**Especificación econométrica:**
-
-$$y_{n-1,t+1} - y_{n,t} = \alpha_n + \beta_n\,\frac{s_{n,t}}{n-1} + \epsilon_{n,t} \qquad \text{(ec. 10.2.16, EH: }\beta_n=1\text{)}$$
-
-$$s_{n,t}^* = \mu_n + \gamma_n\,s_{n,t} + \nu_{n,t}, \qquad s_{n,t}^* = \sum_{i=1}^{n-1}\left(1-\frac{i}{n}\right)\Delta y_{1,t+i} \qquad \text{(ec. 10.2.18, EH: }\gamma_n=1\text{)}$$
-
-**Resultados β (predecir cambios en tasa larga):**
-
-| Plazo | β | ¿La EH se cumple? |
-|-------|---|-------------------|
-| 3 años | 0.14 | ❌ No |
-| 5 años | 0.20 | ❌ No |
-| 10 años | 0.29 | ❌ No |
-| 20 años | 0.48 | ❌ No |
-| 30 años | −0.01 | ❌ No |
-
-**Resultados γ (predecir cambios en tasa corta):**
-
-| Plazo | γ | Interpretación |
-|-------|---|----------------|
-| 3 años | 0.04 | Solo el 4% del spread se traduce en cambios de tasa corta |
-| 5 años | 0.06 | Solo el 6% |
-| 10 años | 0.09 | Solo el 9% |
-| 20 años | 0.21 | 21% |
-| 30 años | 0.33 | 33% |
-
-**Salidas:** `outputs/tables/campbell_shiller_results.csv`, `outputs/figures/campbell_shiller_coefficients.png`
+- **Cero hardcoding:** ninguna credencial, RFC o ruta sensible está escrita en el código fuente.
+- **`python-dotenv`:** todas las credenciales viven exclusivamente en el archivo `.env` local.
+- **`.gitignore` blindado:** excluye `.env`, `*.cer`, `*.key`, `*.pem`, el contenido de `downloads/` y cachés de Python. Ningún dato sensible puede llegar al repositorio remoto de forma accidental.
+- **Desencriptado en memoria:** la llave privada de la e.firma se desencripta en RAM y nunca se escribe en texto plano a disco.
+- **Sin dependencias de navegador:** no se usa Selenium, Playwright ni ninguna técnica de scraping. La comunicación es exclusivamente vía el Web Service oficial del SAT.
 
 ---
 
-### `08_conclusion_results.ipynb` — Conclusiones y resultados consolidados
-Integra los resultados de todos los notebooks, replica los cuadros de CLM con datos mexicanos y genera las visualizaciones finales.
+## 🙏 Créditos
 
-**Errores corregidos (v2):** Se corrigieron rutas de archivos que usaban paths absolutos del entorno local del autor (incompatibles con otras máquinas), reemplazándolos por paths relativos al directorio del proyecto.
+Este proyecto no sería posible sin el trabajo de [**@josuealvarado**](https://github.com/SAT-CFDI) y los colaboradores de la librería open-source [`python-satcfdi`](https://github.com/SAT-CFDI/python-satcfdi).
 
----
+`satcfdi` abstrae toda la complejidad del protocolo SOAP + WS-Security que requiere el SAT, incluyendo la construcción y firma de mensajes XML, la gestión automática del token de autenticación y los modelos de datos del ciclo de descarga masiva. Sin esta librería, implementar este cliente desde cero requeriría cientos de líneas de código de bajo nivel de criptografía y XML.
 
-## 🔍 Resultados principales
-
-### Comparación con Estados Unidos (Tabla 10.3 del libro)
-
-| Aspecto | EE.UU. 1952–1991 (CLM) | México 2010–2025 (este estudio) |
-|---------|------------------------|----------------------------------|
-| β para bonos largos (20 años) | −2.26 | ~0.48 (cercano a cero) |
-| γ para bonos largos (20 años) | 0.44 | 0.21 |
-| R² en regresiones β | Bajos (pero significativos) | Muy bajos (<11%) |
-| EH en plazos cortos (≤6 meses) | Parcialmente | ✅ Mejor que en EE.UU. (R² > 0.90) |
-
-**¿Por qué las diferencias?** El mercado mexicano de bonos largos es menos líquido y está más influido por factores externos (tasas de la Fed, aversión al riesgo global). La política monetaria de Banxico tiene un impacto más directo en el extremo corto de la curva que en el extremo largo.
+Si este proyecto te fue útil, considera también darle una ⭐ al repositorio original de `satcfdi`.
 
 ---
 
-## 🧠 Conclusiones finales
+## 📄 Licencia
 
-1. **La hipótesis de expectativas funciona bien en México para plazos de 3 a 6 meses.** Las tasas forward de CETES predicen excelentemente las tasas futuras (R² > 0.90). Si quieres saber hacia dónde van las tasas en los próximos 3–6 meses, mira las tasas forward de CETES.
-
-2. **Para plazos más largos (3–30 años), la hipótesis no se cumple.** El spread no predice movimientos de tasas largas, y solo una pequeña fracción del spread se traduce en cambios de tasas cortas. Los β son todos negativos (como en EE.UU.), lo que indica que un spread positivo alto se asocia a caídas futuras de la tasa larga.
-
-3. **La mayor parte del spread refleja "primas de plazo"** (compensación por riesgo de inflación, liquidez e incertidumbre), no expectativas de tasas futuras. Más del 67% del spread a largo plazo es prima de plazo, no información sobre tasas futuras.
-
-4. **En enero 2023 (pico de tasas), la curva estaba invertida.** Tanto los splines cúbicos como el modelo Nelson-Siegel capturaron que el mercado anticipaba bajas de tasas — que efectivamente ocurrieron en 2024–2025.
-
-5. **La duración mide el riesgo de tasa de interés.** Un bono a 20 años puede caer ~9.4% si las tasas suben 1%. Esto es crucial para inversores y administradores de fondos de deuda.
-
-6. **El mercado mexicano de deuda es eficiente en el corto plazo** (CETES), pero en el largo plazo está más dominado por factores globales (Fed, aversión al riesgo) que por la política monetaria de Banxico.
+MIT License — consulta el archivo `LICENSE` para más detalles.
 
 ---
 
-## 📊 Conceptos básicos
-
-| Término | ¿Qué significa? |
-|---------|-----------------|
-| **CETES** | Bonos del gobierno a corto plazo (1 mes a 1 año). Se venden con descuento: compras hoy por menos del valor nominal. |
-| **Bonos M** | Bonos a largo plazo con cupón (3 a 30 años). Pagan intereses periódicos más el principal al vencimiento. |
-| **Udibonos** | Bonos indexados a la inflación (UDIS). Protegen el poder adquisitivo. |
-| **Curva de rendimientos** | Gráfica que muestra la tasa de interés según el plazo. |
-| **Curva normal** | Tasas cortas < tasas largas. Señal de economía saludable. |
-| **Curva invertida** | Tasas cortas > tasas largas. Suele anticipar una recesión o bajadas de tasas. |
-| **Duración** | Mide qué tanto cambia el precio de un bono ante variaciones en tasas. Mayor duración = mayor riesgo. |
-| **Tasa forward** | Tasa de interés implícita para un periodo futuro, calculada con las tasas spot actuales. |
-| **Hipótesis de expectativas** | Teoría que dice que las tasas forward son predictores óptimos de las tasas spot futuras. |
-| **Prima de plazo** | Compensación extra exigida por los inversionistas por prestar a largo plazo. |
-| **Spread** | Diferencia entre la tasa larga y la tasa corta, snt = ynt − y1t. |
-
----
-
-## 📚 Bibliografía
-
-- Campbell, J. Y., Lo, A. W., & MacKinlay, A. C. (1997). *The Econometrics of Financial Markets*. Princeton University Press. Capítulo 10.
-- Nelson, C. R., & Siegel, A. F. (1987). Parsimonious modeling of yield curves. *Journal of Business*, 60(4), 473–489.
-- Diebold, F. X., & Li, C. (2006). Forecasting the term structure of government bond yields. *Journal of Econometrics*, 130(2), 337–364.
-- McCulloch, J. H. (1975). The tax-adjusted yield curve. *Journal of Finance*, 30(3), 811–830.
-- Campbell, J. Y., & Shiller, R. J. (1991). Yield spreads and interest rate movements: a bird's eye view. *Review of Economic Studies*, 58(3), 495–514.
-- **Datos:** Banco de México, Sistema de Información Económica (SIE), 2010–2025.
-
----
-
-*Última actualización: Mayo 2026*
+*Desarrollado por [Ismael](https://github.com/tu-usuario) · Economía + Ciencia de Datos · UNAM FES Aragón*
