@@ -19,8 +19,8 @@ __pycache__/
 *.egg-info/
 
 # Descargas (contienen CFDIs reales, nunca deben subirse)
-downloads/*.zip
-downloads/*.xml
+downloads/*
+!downloads/.gitkeep
 
 # macOS
 .DS_Store
