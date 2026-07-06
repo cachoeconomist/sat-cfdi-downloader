@@ -131,7 +131,7 @@ SAT Web Service (SOAP + WS-Security)
 ### 1. Clona el repositorio
 
 ```bash
-git clone https://github.com/tu-usuario/sat-cfdi-downloader.git
+git clone https://github.com/cachoeconomist/sat-cfdi-downloader.git
 cd sat-cfdi-downloader
 ```
 
